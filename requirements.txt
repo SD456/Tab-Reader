@@ -1,0 +1,4 @@
+pymupdf>=1.23
+pillow>=10.0
+pygame>=2.5
+customtkinter>=5.2
