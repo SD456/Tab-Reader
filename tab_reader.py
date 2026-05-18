@@ -44,6 +44,7 @@ except ImportError:
 
 
 SETTINGS_FILE = Path.home() / ".tab_reader_settings.json"
+PLAYLIST_FILE = Path.home() / ".tab_reader_playlist.json"
 
 # ---------- Modern flat palette (no glass, just soft surfaces) ----------
 BG          = "#18181b"   # window background
@@ -87,6 +88,11 @@ class TabReader:
         self.scroll_pos: float = 0.0
         self._last_tick: float | None = None
         self._zoom_after_id: str | None = None
+
+        # playlist state
+        self.playlist: list[dict] = self._load_playlist_file()  # [{name, pdf, audio}]
+        self.selected_idx: int | None = None
+        self.entry_buttons: list = []  # CTkButton refs for highlighting
 
         self.settings = self._load_settings_file()
 
@@ -155,9 +161,23 @@ class TabReader:
         ctk.CTkButton(top, text="Save settings for song", command=self.save_current_settings,
                       **save_btn).pack(side="right", padx=(6, 12), pady=BAR_PAD)
 
+        # ---------- body: sidebar (playlist) + main column ----------
+        body_split = ctk.CTkFrame(self.root, fg_color="transparent")
+        body_split.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+
+        # sidebar (left)
+        sidebar = ctk.CTkFrame(body_split, fg_color=SURFACE, corner_radius=CORNER_LG, width=240)
+        sidebar.pack(side="left", fill="y", padx=(0, 10))
+        sidebar.pack_propagate(False)
+        self._build_playlist_sidebar(sidebar)
+
+        # main column (right) - holds settings, status, canvas
+        main_col = ctk.CTkFrame(body_split, fg_color="transparent")
+        main_col.pack(side="left", fill="both", expand=True)
+
         # ---------- settings card ----------
-        mid = ctk.CTkFrame(self.root, fg_color=SURFACE, corner_radius=CORNER_LG)
-        mid.pack(fill="x", padx=14, pady=7)
+        mid = ctk.CTkFrame(main_col, fg_color=SURFACE, corner_radius=CORNER_LG)
+        mid.pack(fill="x", pady=(0, 7))
 
         grid = ctk.CTkFrame(mid, fg_color="transparent")
         grid.pack(fill="x", padx=14, pady=12)
@@ -248,15 +268,15 @@ class TabReader:
 
         # ---------- status pill ----------
         self.status_var = tk.StringVar(value="Open a PDF and an audio file to begin.")
-        status_card = ctk.CTkFrame(self.root, fg_color=SURFACE, corner_radius=CORNER_MD)
-        status_card.pack(fill="x", padx=14, pady=7)
+        status_card = ctk.CTkFrame(main_col, fg_color=SURFACE, corner_radius=CORNER_MD)
+        status_card.pack(fill="x", pady=(0, 7))
         ctk.CTkLabel(status_card, textvariable=self.status_var,
                      text_color=TEXT_MUTED, font=(FONT_FAMILY, 11),
                      anchor="w").pack(fill="x", padx=14, pady=8)
 
         # ---------- PDF canvas card ----------
-        canvas_card = ctk.CTkFrame(self.root, fg_color=SURFACE, corner_radius=CORNER_LG)
-        canvas_card.pack(fill="both", expand=True, padx=14, pady=(7, 14))
+        canvas_card = ctk.CTkFrame(main_col, fg_color=SURFACE, corner_radius=CORNER_LG)
+        canvas_card.pack(fill="both", expand=True)
 
         # inner frame to hold canvas + scrollbars (use plain tk widgets here; the
         # rounded card around it gives the modern look).
@@ -314,10 +334,20 @@ class TabReader:
         )
         if not path:
             return
-        self.pdf_path = path
-        self.pdf_doc = None  # force reopen
-        self._render_pdf()
-        self.status_var.set(f"Loaded PDF: {os.path.basename(path)}")
+        self._load_pdf(path)
+
+    def _load_pdf(self, path: str) -> bool:
+        if fitz is None or Image is None:
+            return False
+        try:
+            self.pdf_path = path
+            self.pdf_doc = None  # force reopen
+            self._render_pdf()
+            self.status_var.set(f"Loaded PDF: {os.path.basename(path)}")
+            return True
+        except Exception as e:
+            messagebox.showerror("PDF load error", str(e))
+            return False
 
     def _render_pdf(self, preserve_position: bool = False) -> None:
         if not self.pdf_path:
@@ -401,12 +431,17 @@ class TabReader:
         )
         if not path:
             return
+        self._load_audio(path)
+
+    def _load_audio(self, path: str) -> bool:
+        if pygame is None:
+            return False
         try:
             pygame.mixer.music.stop()
             pygame.mixer.music.load(path)
         except Exception as e:
             messagebox.showerror("Audio load error", str(e))
-            return
+            return False
 
         self.audio_path = path
         self.is_playing = False
@@ -430,6 +465,7 @@ class TabReader:
 
         loaded_msg = "  -  saved settings restored" if s else ""
         self.status_var.set(f"Loaded audio: {os.path.basename(path)}{loaded_msg}")
+        return True
 
     def _on_volume(self, val) -> None:
         try:
@@ -563,6 +599,131 @@ class TabReader:
                 self._last_tick = None
         finally:
             self.root.after(33, self._tick)
+
+    # ---------------------------------------------------- PLAYLIST ---------
+    def _build_playlist_sidebar(self, parent) -> None:
+        # header
+        head = ctk.CTkFrame(parent, fg_color="transparent")
+        head.pack(fill="x", padx=12, pady=(12, 6))
+        ctk.CTkLabel(head, text="Playlist", text_color=TEXT,
+                     font=(FONT_FAMILY, 14, "bold")).pack(side="left")
+
+        # add / remove row
+        btn_row = ctk.CTkFrame(parent, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(0, 8))
+        ctk.CTkButton(
+            btn_row, text="+ Add", command=self.add_to_playlist,
+            corner_radius=CORNER_SM, height=30, width=82,
+            font=(FONT_FAMILY, 12),
+            fg_color=ACCENT, hover_color=ACCENT_HOV,
+            text_color="white", border_width=0,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            btn_row, text="â Remove", command=self.remove_from_playlist,
+            corner_radius=CORNER_SM, height=30, width=92,
+            font=(FONT_FAMILY, 12),
+            fg_color=SURFACE_2, hover_color="#52525b",
+            text_color=TEXT, border_width=0,
+        ).pack(side="left", padx=4)
+
+        # scrollable list of entries
+        self.entry_list = ctk.CTkScrollableFrame(
+            parent, fg_color=BG, corner_radius=CORNER_SM,
+            scrollbar_button_color=SURFACE_2,
+            scrollbar_button_hover_color="#52525b",
+        )
+        self.entry_list.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+
+        self._refresh_playlist_ui()
+
+    def _refresh_playlist_ui(self) -> None:
+        # rebuild the entry buttons in the scrollable list
+        for child in self.entry_list.winfo_children():
+            child.destroy()
+        self.entry_buttons = []
+
+        if not self.playlist:
+            ctk.CTkLabel(
+                self.entry_list, text="No songs yet.\nClick + Add to start.",
+                text_color=TEXT_DIM, font=(FONT_FAMILY, 11), justify="center"
+            ).pack(pady=16)
+            return
+
+        for i, entry in enumerate(self.playlist):
+            name = entry.get("name") or os.path.basename(entry.get("audio", "")) or f"Entry {i+1}"
+            is_active = (i == self.selected_idx)
+            btn = ctk.CTkButton(
+                self.entry_list, text=name, anchor="w",
+                command=lambda idx=i: self.load_playlist_entry(idx),
+                corner_radius=CORNER_SM, height=32,
+                font=(FONT_FAMILY, 12),
+                fg_color=(ACCENT if is_active else "transparent"),
+                hover_color=(ACCENT_HOV if is_active else SURFACE_2),
+                text_color=("white" if is_active else TEXT),
+                border_width=0,
+            )
+            btn.pack(fill="x", padx=4, pady=2)
+            self.entry_buttons.append(btn)
+
+    def add_to_playlist(self) -> None:
+        # pick PDF
+        pdf = filedialog.askopenfilename(
+            title="Select PDF for new playlist entry",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+        if not pdf:
+            return
+        # pick audio
+        audio = filedialog.askopenfilename(
+            title="Select audio file (MP3 / WAV) for new playlist entry",
+            filetypes=[("Audio", "*.mp3 *.wav"), ("MP3", "*.mp3"), ("WAV", "*.wav"), ("All files", "*.*")],
+        )
+        if not audio:
+            return
+        name = os.path.splitext(os.path.basename(audio))[0]
+        self.playlist.append({"name": name, "pdf": pdf, "audio": audio})
+        self._write_playlist_file()
+        self._refresh_playlist_ui()
+        self.status_var.set(f"Added '{name}' to playlist.")
+
+    def remove_from_playlist(self) -> None:
+        if self.selected_idx is None or not (0 <= self.selected_idx < len(self.playlist)):
+            self.status_var.set("Select a playlist entry first (click it once).")
+            return
+        removed = self.playlist.pop(self.selected_idx)
+        self.selected_idx = None
+        self._write_playlist_file()
+        self._refresh_playlist_ui()
+        self.status_var.set(f"Removed '{removed.get('name', '?')}' from playlist.")
+
+    def load_playlist_entry(self, idx: int) -> None:
+        if not (0 <= idx < len(self.playlist)):
+            return
+        entry = self.playlist[idx]
+        self.selected_idx = idx
+        # stop any currently playing audio cleanly
+        self.stop()
+        ok_pdf = self._load_pdf(entry["pdf"])
+        ok_aud = self._load_audio(entry["audio"])
+        self._refresh_playlist_ui()
+        if ok_pdf and ok_aud:
+            self.status_var.set(f"Loaded '{entry.get('name', os.path.basename(entry['audio']))}' from playlist.")
+
+    def _load_playlist_file(self) -> list:
+        if PLAYLIST_FILE.exists():
+            try:
+                data = json.loads(PLAYLIST_FILE.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    return data
+            except Exception:
+                return []
+        return []
+
+    def _write_playlist_file(self) -> None:
+        try:
+            PLAYLIST_FILE.write_text(json.dumps(self.playlist, indent=2), encoding="utf-8")
+        except Exception as e:
+            messagebox.showerror("Couldn't save playlist", str(e))
 
     # ------------------------------------------------------- CLOSE ---------
     def _on_close(self) -> None:
