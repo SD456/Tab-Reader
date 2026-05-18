@@ -12,6 +12,8 @@ remembered, so each tune keeps its own configuration.
 - Auto-scroll begins after a configurable **start delay** (so you can sync the
   scroll to the actual moment the music starts in your tab).
 - Adjustable **scroll speed**, **zoom**, and **volume** — all live.
+- **Playlist sidebar** of PDF+audio pairs; click an entry to load both at once.
+  The playlist persists between sessions.
 - **Save** per-song settings; they reload automatically the next time you open
   that audio file.
 - Manual scrolling (mouse wheel / scrollbar) works any time, and auto-scroll
@@ -25,7 +27,7 @@ remembered, so each tune keeps its own configuration.
   - `pymupdf` — PDF rendering
   - `pillow` — image handling
   - `pygame` — audio playback
-  - `customtkinter` — the modern UI
+  - `customtkinter` — the UI
 
 ## Installation
 
@@ -73,6 +75,21 @@ e.g. `py -3.12 -m pip install -r requirements.txt`.
 You can also scroll manually at any time with the mouse wheel or the
 scrollbar; auto-scroll just continues from wherever you've moved to.
 
+## Playlist
+
+The left sidebar holds a persistent playlist of PDF+audio pairs.
+
+- **+ Add** — opens two file pickers: first the PDF, then the audio. The new
+  entry appears at the bottom of the list, named after the audio file.
+- **Click an entry** — loads both that PDF and that audio together. If you'd
+  previously saved per-song settings (delay / speed / zoom) for that audio,
+  they're restored automatically.
+- **− Remove** — click an entry to select it (it turns indigo), then hit
+  Remove to delete it from the list.
+
+The playlist is saved automatically every time it changes, so it's there next
+time you open the app.
+
 ## Audio output device
 
 The app uses whatever output Windows is currently set as default. If you have
@@ -91,8 +108,14 @@ Per-song settings are written to:
 ~/.tab_reader_settings.json                 (macOS / Linux)
 ```
 
-It's plain JSON keyed by audio filename — safe to inspect, edit, or delete to
-start fresh.
+The playlist is written to:
+
+```
+%USERPROFILE%\.tab_reader_playlist.json     (Windows)
+~/.tab_reader_playlist.json                 (macOS / Linux)
+```
+
+Both are plain JSON — safe to inspect, edit, or delete to start fresh.
 
 ## Troubleshooting
 
